@@ -1,0 +1,527 @@
+#################################################################################################
+## Created on: April 2018 
+## Last updated on: Dec 2018
+## Current Version: 12.0 (Refer Change Log in the bottom)
+## Created by: Sivakumar Ramanujam
+## Contributors: Sasikumar Pandurangan
+## Description: This script does complete system Healthcheckup and status of Critical Services.
+## It checks the following
+##   - Ip Address
+##   - Ping status
+##   - Installed Memory
+##   - Average CPU Load
+##   - AVerage Memory Load
+##   - Drives Free Space %
+##   - Uptime
+##   - Critical Services Status
+## Scripts generates the output as HTML file which will be sent to the given Email address
+##################################################################################################
+
+$computers = gc C:\Scripts\Servers.txt
+$srcs = gc C:\Scripts\Services.txt 
+$maxUpTimeDays = 30
+$resultsHTM = "C:\Scripts\System_Services_Healthcheck.htm"
+
+# Provide From address, Receipients addresses input file path, SMTP Server name and desired subject
+$emailFrom     = "sender@email.com"
+[string[]]$emailTo  = Get-Content "c:\scripts\emails.txt"
+$smtpServer    = "server.domain.com"
+$emailSubject  = ("Servers Health Check Report - " + (Get-Date -format R))
+
+$headerNames  = "Ipaddress", "Ping", "MeminGB", "CPULoad", "MemLoad", "CDriveFree", "DDriveFree", "EDriveFree", "FDriveFree", "GDriveFree", "HDriveFree",  "MDriveFree",  "QDriveFree",  "PDriveFree",  "Uptime"
+$headerWidths = "6",          "10",     "6",       "6",       "6",        "6",         "6",          "6",          "6",           "6",          "6",           "6",         "6",          "6",           "6"
+
+$headerNames1  = "ServerName", "Ping"
+$headerWidths1 = "4",           "4"
+
+Foreach ($src in $srcs) 
+{
+	$headerNames1 += "$($src)"
+	$headerWidth1 += "4"
+}
+
+#==============================================================================================
+
+Function writeHtmlHeader
+{
+param($title, $fileName)
+$date = ( Get-Date -format R)
+$head = @"
+<html>
+<head>
+<meta http-equiv='Content-Type' content='text/html; charset=iso-8859-1'>
+<title>$title</title>
+<STYLE TYPE="text/css">
+<!--
+td {
+font-family: 'Arial';
+font-size: 11px;
+border-top: 1px solid #999999;
+border-right: 1px solid #999999;
+border-bottom: 1px solid #999999;
+border-left: 1px solid #999999;
+padding-top: 0px;
+padding-right: 0px;
+padding-bottom: 0px;
+padding-left: 0px;
+overflow: hidden;
+}
+body {
+margin-left: 5px;
+margin-top: 5px;
+margin-right: 0px;
+margin-bottom: 10px;
+table {
+table-layout:fixed; 
+border: thin solid #000000;
+}
+-->
+</style>
+</head>
+<body>
+<table width='1700'>
+<tr bgcolor='#D5F5E3'>
+<td colspan='7' height='48' align='center' valign="middle">
+<font face='Arial' color='#003399' size='4'>
+<strong>$title - $date</strong></font>
+</td>
+</tr>
+</table>
+"@
+$head | Out-File $fileName
+}
+
+#==============================================================================================
+
+Function writeTableHeader
+{
+param($fileName)
+$tableHeader = @"
+<table width='1700'><tbody>
+<tr bgcolor='#D5F5E3'>
+<font face='Arial'>
+<td width='6%' align='center'>ServerName</td>
+"@
+
+$i = 0
+while ($i -lt $headerNames.count) {
+	$headerName = $headerNames[$i]
+	$headerWidth = $headerWidths[$i]
+	$tableHeader += "<td width='" + $headerWidth + "%' align='center'><strong>$headerName</strong></td>"
+	$i++
+}
+
+$tableHeader += "</font></tr>"
+
+$tableHeader | Out-File $fileName -append
+}
+
+# ==============================================================================================
+
+Function writeData
+{
+	param($data, $fileName)
+	
+	$data.Keys | sort | foreach {
+		$tableEntry += "<tr><font face='Arial'>"
+		$computerName = $_
+		$tableEntry += ("<td bgcolor='#D5F5E3' align=center><font color='#000000'><b>$computerName</b></font></td>")
+		$headerNames | foreach {
+			try {
+				if ($data.$computerName.$_[0] -eq "SUCCESS") { $bgcolor = "#387C44"; $fontColor = "#FFFFFF" }
+				elseif ($data.$computerName.$_[0] -eq "WARNING") { $bgcolor = "#F4D03F"; $fontColor = "#000000" }
+				elseif ($data.$computerName.$_[0] -eq "ERROR") { $bgcolor = "#FF0000"; $fontColor = "#FFFFFF" }
+                elseif ($data.$computerName.$_[0] -eq "NULL") { $bgcolor = "#CCCCCC"; $fontColor = "#000000" }
+				else { $bgcolor = "#D5F5E3"; $fontColor = "#000000" }
+				$testResult = $data.$computerName.$_[1]
+			}
+			catch {
+				$bgcolor = "#CCCCCC"; $fontColor = "#003399"
+				$testResult = ""
+			}
+			
+			$tableEntry += ("<td bgcolor='" + $bgcolor + "' align=center><font color='" + $fontColor + "'>$testResult</font></td>")
+		}
+		
+		$tableEntry += "</font></tr>"
+	}
+	
+	$tableEntry | Out-File $fileName -append
+}
+
+#==============================================================================================
+
+Function writeHtmlFooter
+{
+param($fileName)
+@"
+</table>
+<table width='1700'>
+<tr bgcolor='#D5F5E3'>
+<td colspan='7' height='25' align='left'>
+</td>
+</tr>
+</table>
+"@ | Out-File $FileName -append
+}
+
+#==============================================================================================
+
+Function writeServiceHeader
+{
+param($title, $fileName)
+$date1 = ( Get-Date -format R)
+$head1 = @"
+<table width='1700'>
+<tr bgcolor='#D5F5E3'>
+<td colspan='7' height='48' align='center' valign="middle">
+<font face='Arial' color='#003399' size='4'>
+<!--<img src="http://servername/administration/icons/xenapp.png" height='42'/>-->
+<strong>$title - $date1</strong></font>
+</td>
+</tr>
+</table>
+"@
+$head1 | Out-File $fileName -append
+}
+
+#==============================================================================================
+
+Function writeServiceTableHeader
+{
+param($fileName)
+$tableHeader1 = @"
+<table width='1700'><tbody>
+<tr bgcolor='#D5F5E3'>
+<font face='Arial'>
+"@
+
+$i = 0
+while ($i -lt $headerNames1.count) {
+	$headerName1 = $headerNames1[$i]
+	$headerWidth1 = $headerWidths1[$i]
+	$tableHeader1 += "<td width='" + $headerWidth1 + "%' align='center'><strong>$headerName1</strong></td>"
+	$i++
+}
+
+$tableHeader1 += "</font></tr>"
+
+$tableHeader1 | Out-File $fileName -append
+}
+
+# ==============================================================================================
+   
+Function writeServiceData
+{
+	param($data, $fileName)
+	
+	$data.Keys | sort | foreach {
+		$tableEntry1 += "<tr><font face='Arial'>"
+		$computerName1 = $_
+		$headerNames1 | foreach {
+			try {
+				if ($data.$computerName1.$_[0] -eq "SUCCESS") { $bgcolor1 = "#387C44"; $fontColor1 = "#FFFFFF" }
+				elseif ($data.$computerName1.$_[0] -eq "WARNING") { $bgcolor1 = "#F4D03F"; $fontColor1 = "#000000" }
+				elseif ($data.$computerName1.$_[0] -eq "ERROR") { $bgcolor1 = "#FF0000"; $fontColor1 = "#FFFFFF" }
+                elseif ($data.$computerName1.$_[0] -eq "NULL") { $bgcolor1 = "#CCCCCC"; $fontColor1 = "#000000" }
+				else { $bgcolor1 = "#D5F5E3"; $fontColor1 = "#000000" }
+				$testResult1 = $data.$computerName1.$_[1]
+			}
+			catch {
+				$bgcolor1 = "#CCCCCC"; $fontColor1 = "#003399"
+				$testResult1 = ""
+			}
+			
+			$tableEntry1 += ("<td bgcolor='" + $bgcolor1 + "' align=center><font color='" + $fontColor1 + "'>$testResult1</font></td>")
+		}
+		
+		$tableEntry1 += "</font></tr>"
+	}
+	
+	$tableEntry1 | Out-File $fileName -append
+}
+
+
+# ==============================================================================================
+
+Function writeServiceFooter
+{
+param($fileName)
+@"
+</table>
+<table width='1700'>
+<tr bgcolor='#D5F5E3'>
+<td colspan='7' height='25' align='left'>
+<br>
+<br>
+<strong>Script Created by: </strong> Sivakumar Ramanujam
+<br>
+</td>
+</tr>
+</table>
+</body>
+</html>
+"@ | Out-File $FileName -append
+}
+
+  
+#==============================================================================================
+function Ping([string]$hostname, [int]$timeout = 200) {
+$ping = new-object System.Net.NetworkInformation.Ping #creates a ping object
+try { $result = $ping.send($hostname, $timeout).Status.ToString() }
+catch { $result = "Failure" }
+return $result
+}
+#==============================================================================================
+
+# ==============================================================================================
+# ==                                       Main Script                                       ==
+# ==============================================================================================
+
+rm $resultsHTM -force -EA SilentlyContinue
+
+$allResults = @{}
+
+ForEach($computername in $computers)
+{
+Write-Host ("Gathering system details for server: " + $Computername)
+
+$tests = @{}
+
+$server = $computername
+
+$IPresult = [System.Net.Dns]::GetHostAddresses($computername)
+$tests.Ipaddress = $null, $IPresult
+
+$result = Ping $server 100
+if ($result -eq "SUCCESS") { 
+
+
+if ((Test-Path -Path \\$Server\c$\*) -eq $true)
+{
+
+$tests.Ping = "SUCCESS", $result 
+
+$WmiUptime = Get-WmiObject -Class win32_operatingsystem -ComputerName $computername
+$LocalTime = $WmiUpTime.ConvertToDateTime($WmiUpTime.LocalDateTime)
+$Uptime = $WmiUpTime.ConvertToDateTime($WmiUpTime.LastBootUpTime)
+$Uptime = ((get-date) - $Uptime).days
+if ($uptime -gt $maxUpTimeDays) 
+            {
+				 $tests.Uptime = "WARNING", $uptime
+			} 
+else {  $tests.Uptime = "SUCCESS", $uptime }
+
+
+$InstalledRAM = Get-WmiObject -Class Win32_ComputerSystem -Computername $computername 
+$PhyMEM = [Math]::Round(($InstalledRAM.TotalPhysicalMemory/1GB),2)
+$tests.MeminGB = $null, $PhyMEM
+
+$Proc = Get-WmiObject -computername $computername win32_processor | Measure-Object -property LoadPercentage -Average | Select Average
+$AVGProc = [math]::round($Proc.Average, 1)
+if ($AVGProc -ge 90) {$tests.CPULoad = "ERROR", "$($AVGProc)%"}
+elseif ($AVGProc -ge 80) {$tests.CPULoad = "WARNING", "$($AVGProc)%"}
+else {$tests.CPULoad = "SUCCESS", "$($AVGProc)%"}
+
+$OS = Get-WmiObject -Class win32_operatingsystem -computername $computername |Select-Object @{Name = "MemoryUsage"; Expression = {“{0:N2}” -f ((($_.TotalVisibleMemorySize - $_.FreePhysicalMemory)*100)/ $_.TotalVisibleMemorySize) }}
+if ($OS.MemoryUsage -ge 90) {$tests.MemLoad = "ERROR", "$($OS.MemoryUsage)%"}
+elseif ($OS.MemoryUsage -ge 80) {$tests.MemLoad = "WARNING", "$($OS.MemoryUsage)%"}
+else {$tests.MemLoad = "SUCCESS", "$($OS.MemoryUsage)%"}
+
+
+$vol = Get-WmiObject -Class win32_Volume -ComputerName $computername -Filter "DriveLetter = 'C:'" | Select-object @{Name = "C PercentFree"; Expression = {“{0:N2}” -f  (($_.FreeSpace / $_.Capacity)*100) } }
+if ( [int] $vol.'C PercentFree' -ge 15) {$tests.CDriveFree = "SUCCESS", "$($vol.'C PercentFree')%"}
+elseif ($vol.'C PercentFree' -eq "0.00") {$tests.CDriveFree = "NULL", "$($vol.'C PercentFree')%"}
+elseif ($vol.'C PercentFree' -eq $null) {$tests.CDriveFree = "NULL", "$($vol.'C PercentFree')-"}
+elseif ( [int] $vol.'C PercentFree' -lt 5) {$tests.CDriveFree = "ERROR", "$($vol.'C PercentFree')%"}
+else {$tests.CDriveFree = "WARNING", "$($vol.'C PercentFree')%"}
+
+$vol1 = Get-WmiObject -Class win32_Volume -ComputerName $computername -Filter "DriveLetter = 'D:'" | Select-object @{Name = "D PercentFree"; Expression = {“{0:N2}” -f  (($_.FreeSpace / $_.Capacity)*100) } }
+if ( [int] $vol1.'D PercentFree' -ge 15) {$tests.DDriveFree = "SUCCESS", "$($vol1.'D PercentFree')%"}
+elseif ($vol1.'D PercentFree' -eq "0.00") {$tests.DDriveFree = "NULL", "$($vol1.'D PercentFree')%"}
+elseif ($vol1.'D PercentFree' -eq $null) {$tests.DDriveFree = "NULL", "$($vol1.'D PercentFree')-"}
+elseif ( [int] $vol1.'D PercentFree' -lt 5) {$tests.DDriveFree = "ERROR", "$($vol1.'D PercentFree')%"}
+else {$tests.DDriveFree = "WARNING", "$($vol1.'D PercentFree')%"}
+
+$vol2= Get-WmiObject -Class win32_Volume -ComputerName $computername -Filter "DriveLetter = 'E:'" | Select-object @{Name = "E PercentFree"; Expression = {“{0:N2}” -f  (($_.FreeSpace / $_.Capacity)*100) } }
+if ( [int] $vol2.'E PercentFree' -ge 15) {$tests.EDriveFree = "SUCCESS", "$($vol2.'E PercentFree')%"}
+elseif ($vol2.'E PercentFree' -eq "0.00") {$tests.EDriveFree = "NULL", "$($vol2.'E PercentFree')%"}
+elseif ($vol2.'E PercentFree' -eq $null) {$tests.EDriveFree = "NULL", "$($vol2.'E PercentFree')-"}
+elseif ( [int] $vol2.'E PercentFree' -lt 5) {$tests.EDriveFree = "ERROR", "$($vol2.'E PercentFree')%"}
+else {$tests.EDriveFree = "WARNING", "$($vol2.'E PercentFree')%"}
+
+$vol3 = Get-WmiObject -Class win32_Volume -ComputerName $computername -Filter "DriveLetter = 'F:'" | Select-object @{Name = "F PercentFree"; Expression = {“{0:N2}” -f  (($_.FreeSpace / $_.Capacity)*100) } }
+if ( [int] $vol3.'F PercentFree' -ge 15) {$tests.FDriveFree = "SUCCESS", "$($vol3.'F PercentFree')%"}
+elseif ($vol3.'F PercentFree' -eq "0.00") {$tests.FDriveFree = "NULL", "$($vol3.'F PercentFree')%"}
+elseif ($vol3.'F PercentFree' -eq $null) {$tests.FDriveFree = "NULL", "$($vol3.'F PercentFree')-"}
+elseif ( [int] $vol3.'F PercentFree' -lt 5) {$tests.FDriveFree = "ERROR", "$($vol3.'F PercentFree')%"}
+else {$tests.FDriveFree = "WARNING", "$($vol3.'F PercentFree')%"}
+
+$vol4= Get-WmiObject -Class win32_Volume -ComputerName $computername -Filter "DriveLetter = 'G:'" | Select-object @{Name = "G PercentFree"; Expression = {“{0:N2}” -f  (($_.FreeSpace / $_.Capacity)*100) } }
+if ( [int] $vol4.'G PercentFree' -ge 15) {$tests.GDriveFree = "SUCCESS", "$($vol4.'G PercentFree')%"}
+elseif ($vol4.'G PercentFree' -eq "0.00") {$tests.GDriveFree = "NULL", "$($vol4.'G PercentFree')%"}
+elseif ($vol4.'G PercentFree' -eq $null) {$tests.GDriveFree = "NULL", "$($vol4.'G PercentFree')-"}
+elseif ( [int] $vol4.'G PercentFree' -lt 5) {$tests.GDriveFree = "ERROR", "$($vol4.'G PercentFree')%"}
+else {$tests.GDriveFree = "WARNING", "$($vol4.'G PercentFree')%"}
+
+$vol5 = Get-WmiObject -Class win32_Volume -ComputerName $computername -Filter "DriveLetter = 'H:'" | Select-object @{Name = "H PercentFree"; Expression = {“{0:N2}” -f  (($_.FreeSpace / $_.Capacity)*100) } }
+if ( [int] $vol5.'H PercentFree' -ge 15) {$tests.HDriveFree = "SUCCESS", "$($vol5.'H PercentFree')%"}
+elseif ($vol5.'H PercentFree' -eq "0.00") {$tests.HDriveFree = "NULL", "$($vol5.'H PercentFree')%"}
+elseif ($vol5.'H PercentFree' -eq $null) {$tests.HDriveFree = "NULL", "$($vol5.'H PercentFree')-"}
+elseif ( [int] $vol5.'H PercentFree' -lt 5) {$tests.HDriveFree = "ERROR", "$($vol5.'H PercentFree')%"}
+else {$tests.HDriveFree = "WARNING", "$($vol5.'H PercentFree')%"}
+
+$vol10 = Get-WmiObject -Class win32_Volume -ComputerName $computername -Filter "DriveLetter = 'M:'" | Select-object @{Name = "M PercentFree"; Expression = {“{0:N2}” -f  (($_.FreeSpace / $_.Capacity)*100) } }
+if ( [int] $vol10.'M PercentFree' -ge 15) {$tests.MDriveFree = "SUCCESS", "$($vol10.'M PercentFree')%"}
+elseif ($vol10.'M PercentFree' -eq "0.00") {$tests.MDriveFree = "NULL", "$($vol10.'M PercentFree')%"}
+elseif ($vol10.'M PercentFree' -eq $null) {$tests.MDriveFree = "NULL", "$($vol10.'M PercentFree')-"}
+elseif ( [int] $vol10.'M PercentFree' -lt 5) {$tests.MDriveFree = "ERROR", "$($vol10.'M PercentFree')%"}
+else {$tests.MDriveFree = "WARNING", "$($vol10.'M PercentFree')%"}
+
+$vol11 = Get-WmiObject -Class win32_Volume -ComputerName $computername -Filter "DriveLetter = 'Q:'" | Select-object @{Name = "Q PercentFree"; Expression = {“{0:N2}” -f  (($_.FreeSpace / $_.Capacity)*100) } }
+if ( [int] $vol11.'Q PercentFree' -ge 15) {$tests.QDriveFree = "SUCCESS", "$($vol11.'Q PercentFree')%"}
+elseif ($vol11.'Q PercentFree' -eq "0.00") {$tests.QDriveFree = "NULL", "$($vol11.'Q PercentFree')%"}
+elseif ($vol11.'Q PercentFree' -eq $null) {$tests.QDriveFree = "NULL", "$($vol11.'Q PercentFree')-"}
+elseif ( [int] $vol11.'Q PercentFree' -lt 5) {$tests.QDriveFree = "ERROR", "$($vol11.'Q PercentFree')%"}
+else {$tests.QDriveFree = "WARNING", "$($vol11.'Q PercentFree')%"}
+
+$vol12 = Get-WmiObject -Class win32_Volume -ComputerName $computername -Filter "DriveLetter = 'P:'" | Select-object @{Name = "P PercentFree"; Expression = {“{0:N2}” -f  (($_.FreeSpace / $_.Capacity)*100) } }
+if ( [int] $vol12.'P PercentFree' -ge 15) {$tests.PDriveFree = "SUCCESS", "$($vol12.'P PercentFree')%"}
+elseif ($vol12.'P PercentFree' -eq "0.00") {$tests.PDriveFree = "NULL", "$($vol12.'P PercentFree')%"}
+elseif ($vol12.'P PercentFree' -eq $null) {$tests.PDriveFree = "NULL", "$($vol12.'P PercentFree')-"}
+elseif ( [int] $vol12.'P PercentFree' -lt 5) {$tests.PDriveFree = "ERROR", "$($vol12.'P PercentFree')%"}
+else {$tests.PDriveFree = "WARNING", "$($vol12.'P PercentFree')%"}
+
+}
+
+else { $tests.Ping = "Error", "Pinging - Access Denied" }
+
+}
+
+else { $tests.Ping = "Error", $result }
+
+$allResults.$server = $tests
+
+}
+
+#===================================================================================================
+
+$allResults1 = @{}
+
+ForEach($computer in $computers)
+{
+Write-Host ("Gathering services status for server: " + $Computer)
+$tests1 = @{}
+
+
+$server1 = $computer
+
+$result1 = Ping $server1 100
+
+if ($result1 -eq "SUCCESS") 
+{ 
+
+if ((Test-Path -Path \\$Server1\c$\*) -eq $true)
+{
+
+Foreach ($src in $srcs) 
+    {
+        $service = Get-Service -ComputerName $computer | Where-object {$_.Name -like "$src"} | select Name,DisplayName,Status,StartType
+        If ($service -eq $null)
+        {
+        $tests1.ServerName = $null, $server1
+        $tests1.Ping = "SUCCESS", $result1
+        $tests1.$src = "NULL", "-"
+        }
+        else
+        {
+        if ($service.status -match "Running")
+        {
+        $tests1.ServerName = $null, $server1
+        $tests1.Ping = "SUCCESS", $result1
+        $tests1.$src = "SUCCESS","Running"
+        }
+        else
+        {
+        $tests1.ServerName = $null, $server1
+        $tests1.Ping = "SUCCESS", $result1
+        $tests1.$src = "ERROR","Stopped"
+        }
+        }
+    }
+
+}
+ 
+else
+{ 
+
+Foreach ($src in $srcs)
+    {
+
+    $tests1.ServerName = $null, $server1
+    $tests1.Ping = "SUCCESS", $result1
+    $tests1.$src = "ERROR","Access Denied"
+     
+    }
+ }
+
+}
+
+else
+{
+
+Foreach ($src in $srcs)
+    {
+
+    $tests1.ServerName = $null, $server1
+    $tests1.Ping = "ERROR", $result1
+    $tests1.$src = "WARNING","Not Reachable"
+
+     
+    }
+}
+
+$allResults1.$server1 = $tests1     
+
+}
+
+Write-Host ("Saving results to html report: " + $resultsHTM)
+writeHtmlHeader "Servers - System Health Check" $resultsHTM
+writeTableHeader $resultsHTM
+$allResults | % { writeData $allResults $resultsHTM }
+writeHtmlFooter $resultsHTM
+writeServiceHeader "Servers - Services Health Check" $resultsHTM
+writeServiceTableHeader $resultsHTM
+$allResults1 | % { writeServiceData $allResults1 $resultsHTM }
+writeServiceFooter $resultsHTM
+Write-host "All Done ! Thanks for using this script"
+
+
+$mailMessageParameters = @{
+	From       = $emailFrom
+	To         = $emailTo
+	Subject    = $emailSubject
+	SmtpServer = $smtpServer
+	Body       = (gc $resultsHTM) | Out-String
+	Attachment = $resultsHTM
+}
+
+Send-MailMessage @mailMessageParameters -BodyAsHtml
+
+#===================================================================================================
+#####################################################################################################################################################################
+## Change Log:
+##
+## Version 1.0 - Created by Sivakumar Ramanujam - Ideas contributed by Sasikumar Pandurangan
+##
+## Version 8.0 - Updated by Sivakumar Ramanujam - Configured all drives (C,D,E,F,G,H,I,J,K,L,M,Q,P,B). Added Email function and configured to Print status of each step 
+##
+## Version 9.0 - Updated by Sivakumar Ramanujam - Added Ping Monitoring and Enabled results based on Ping monitoring to reduce the script Runtime
+##
+## Version 10.0 - Updated by Sivakumar Ramanujam - Added Test connection to detect servers with Access denied issues
+##
+## Version 11.0 - Updated by Sivakumar Ramanujam - Changed Service names as Headers and formatted HTML parameters
+##
+## Version 12.0 - Updated by Sivakumar Ramanujam - Fixed the Drive free space color code issues
+##
+#####################################################################################################################################################################
